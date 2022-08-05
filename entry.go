@@ -55,7 +55,8 @@ type Entry struct {
 	Level Level
 
 	// Calling method, with package name
-	Caller *runtime.Frame
+	Caller     *runtime.Frame
+	SkipFrames int
 
 	// Message passed to Trace, Debug, Info, Warn, Error, Fatal or Panic
 	Message string
@@ -83,7 +84,7 @@ func (entry *Entry) Dup() *Entry {
 	for k, v := range entry.Data {
 		data[k] = v
 	}
-	return &Entry{Logger: entry.Logger, Data: data, Time: entry.Time, Context: entry.Context, err: entry.err}
+	return &Entry{Logger: entry.Logger, Data: data, Time: entry.Time, Context: entry.Context, err: entry.err, Caller: entry.Caller}
 }
 
 // Returns the bytes representation of this entry from the formatter.
@@ -103,13 +104,14 @@ func (entry *Entry) String() (string, error) {
 }
 
 // Add a caller field to the Entry.
-func (entry *Entry) WithCaller() *Entry {
-	frame := getCaller()
+func (entry *Entry) WithCaller(skip int) *Entry {
+	frame := getCaller(skip)
 	if frame != nil {
-		return entry.WithFields(Fields{
+		entry.Caller = frame
+		return entry /*.WithFields(Fields{
 			FieldKeyFile: fmt.Sprintf("%s:%d", frame.File, frame.Line),
 			FieldKeyFunc: frame.Function,
-		})
+		})*/
 	}
 
 	return entry
@@ -189,7 +191,7 @@ func getPackageName(f string) string {
 }
 
 // getCaller retrieves the name of the first non-logrus calling function
-func getCaller() *runtime.Frame {
+func getCaller(skip int) *runtime.Frame {
 	// cache this package's fully-qualified name
 	callerInitOnce.Do(func() {
 		pcs := make([]uintptr, maximumCallerDepth)
@@ -217,6 +219,10 @@ func getCaller() *runtime.Frame {
 
 		// If the caller isn't part of this package, we're done
 		if pkg != logrusPackage {
+			if skip > 0 {
+				skip--
+				continue
+			}
 			return &f //nolint:scopelint
 		}
 	}
@@ -248,8 +254,8 @@ func (entry *Entry) log(level Level, msg string) {
 	bufPool := newEntry.getBufferPool()
 	newEntry.Logger.mu.Unlock()
 
-	if reportCaller {
-		newEntry.Caller = getCaller()
+	if reportCaller && newEntry.Caller == nil {
+		newEntry.Caller = getCaller(0)
 	}
 
 	newEntry.fireHooks()
